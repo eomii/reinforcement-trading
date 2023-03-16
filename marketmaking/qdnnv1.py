@@ -89,7 +89,7 @@ class MarketMakingStrategy:
                     print("Error creating buy order:", e)
 
         elif action == 1:  # Sell
-            btc_balance = self.get_balance('BTC')
+            btc_balance = self.get_balance('SOL')
             if btc_balance * bids[0][0] >= min_notional:
                 price = bids[0][0] * (1 + transaction_fee)
                 amount = max(max_risk / price, min_trade_amount)
