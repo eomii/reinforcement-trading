@@ -117,7 +117,7 @@ class MarketMakingStrategy:
         for i, (order_time, order) in enumerate(self.placed_orders):
             if current_time - order_time > max_age_seconds:
                 try:
-                    binance.cancel_order(order['id'], symbol)  # Swap the order of arguments
+                    binance.cancel_order(order['id'], symbol)
                     print(f"Order {order['id']} canceled.")
                     orders_to_remove.append(i)
                 except ccxt.OrderNotFound as e:
