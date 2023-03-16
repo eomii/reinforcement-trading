@@ -110,23 +110,24 @@ class MarketMakingStrategy:
         else:  # Hold
             pass
 
-
-    def cancel_old_orders(self, max_age_seconds=15):
+    def cancel_old_orders(self, max_age_seconds=180):
         current_time = time.time()
         orders_to_remove = []
 
         for i, (order_time, order) in enumerate(self.placed_orders):
             if current_time - order_time > max_age_seconds:
                 try:
-                    binance.cancel_order(symbol, order['id'])
+                    binance.cancel_order(order['id'], symbol)  # Swap the order of arguments
                     print(f"Order {order['id']} canceled.")
+                    orders_to_remove.append(i)
+                except ccxt.OrderNotFound as e:
+                    print(f"Order {order['id']} not found or already canceled/filled.")
                     orders_to_remove.append(i)
                 except Exception as e:
                     print(f"Error canceling order {order['id']}:", e)
 
         for index in sorted(orders_to_remove, reverse=True):
             del self.placed_orders[index]
-
 
     def get_reward(self, action):
         order_book = binance.fetch_order_book(symbol)
