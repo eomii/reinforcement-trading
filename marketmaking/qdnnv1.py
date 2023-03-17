@@ -129,28 +129,45 @@ class MarketMakingStrategy:
         for index in sorted(orders_to_remove, reverse=True):
             del self.placed_orders[index]
 
-    def get_reward(self, action):
-        order_book = binance.fetch_order_book(symbol)
-        bids, asks = order_book['bids'], order_book['asks']
-        current_mid_price = (bids[0][0] + asks[0][0]) / 2
 
+    def update_order_statuses(self):
+        updated_orders = []
+        for _, order in self.placed_orders:
+            try:
+                order_info = binance.fetch_order(order['id'], symbol)
+                updated_orders.append((_, order_info))
+            except Exception as e:
+                print(f"Error fetching order {order['id']} status:", e)
+        self.placed_orders = updated_orders
+
+
+    def get_realized_pnl(self):
+        pnl = 0
+        for _, order in self.placed_orders:
+            if order['status'] == 'filled':  # Check if the order is filled (Binance)
+                order_info = binance.fetch_order(order['id'], symbol)
+                filled_amount = order_info['filled']
+                price = order_info['price']
+                side = order_info['side']
+
+                if side == 'buy':
+                    pnl -= price * filled_amount * (1 + transaction_fee)
+                elif side == 'sell':
+                    pnl += price * filled_amount * (1 - transaction_fee)
+
+        return pnl
+
+
+    def get_reward(self, action):
+        current_pnl = self.get_realized_pnl()
         self.execute_action(action)
         time.sleep(5)
+        new_pnl = self.get_realized_pnl()
 
-        new_order_book = binance.fetch_order_book(symbol)
-        new_bids, new_asks = new_order_book['bids'], new_order_book['asks']
-        new_mid_price = (new_bids[0][0] + new_asks[0][0]) / 2
-
-        mid_price_difference = new_mid_price - current_mid_price
-
-        if action == 0:  # Buy
-            reward = mid_price_difference
-        elif action == 1:  # Sell
-            reward = -mid_price_difference
-        else:  # Hold
-            reward = 0
+        reward = new_pnl - current_pnl
 
         return reward
+
 
     def run(self):
         while True:
@@ -160,6 +177,7 @@ class MarketMakingStrategy:
             print("state")
             action = self.choose_action(state)
             print("action")
+            self.update_order_statuses()
             reward = self.get_reward(action)
             print("reward")
             next_data = (binance.fetch_order_book(symbol), binance.fetch_ohlcv(symbol, timeframe)[-1])
