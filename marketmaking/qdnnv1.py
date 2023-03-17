@@ -168,6 +168,21 @@ class MarketMakingStrategy:
 
         return reward
 
+    def update_order_statuses_and_remove_filled(self):
+        orders_to_remove = []
+
+        for i, (_, order) in enumerate(self.placed_orders):
+            try:
+                updated_order = binance.fetch_order(order['id'], symbol)
+                if updated_order['status'] == 'closed' or updated_order['status'] == 'canceled':
+                    orders_to_remove.append(i)
+            except Exception as e:
+                print(f"Error fetching order {order['id']} status:", e)
+
+        for index in sorted(orders_to_remove, reverse=True):
+            del self.placed_orders[index]
+
+
 
     def run(self):
         while True:
@@ -179,6 +194,7 @@ class MarketMakingStrategy:
             print("action")
             self.update_order_statuses()
             reward = self.get_reward(action)
+            self.update_order_statuses_and_remove_filled()
             print("reward")
             next_data = (binance.fetch_order_book(symbol), binance.fetch_ohlcv(symbol, timeframe)[-1])
             print("next_data")
