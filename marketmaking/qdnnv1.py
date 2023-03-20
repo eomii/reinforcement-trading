@@ -1,5 +1,6 @@
 import ccxt
 import numpy as np
+import threading
 import time
 import random
 import tensorflow as tf
@@ -12,7 +13,7 @@ binance = ccxt.binance({
     'secret': secret_key,
 })
 
-symbol = 'SOL/USDT'
+symbol = 'SOL/BUSD'
 timeframe = '1m'
 transaction_fee = 0.001
 max_risk = 0.05
@@ -23,9 +24,54 @@ class MarketMakingStrategy:
         self.num_actions = num_actions
         self.alpha = alpha
         self.gamma = gamma
+        self.total_balance = 0
         self.epsilon = epsilon
+        self.epsilon_min = 0.01
+        self.epsilon_decay = 0.995       
         self.model = model
         self.placed_orders = []
+        self.starting_balance = self.get_total_balance()
+
+    def update_epsilon(self):
+        self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
+
+
+    def update_total_balance(self):
+        while True:
+            self.total_balance = self.get_total_balance()
+            print("Total balance is: ", self.total_balance)
+            time.sleep(10)
+
+    def start_balance_updater(self):
+        balance_updater_thread = threading.Thread(target=self.update_total_balance)
+        balance_updater_thread.daemon = True
+        balance_updater_thread.start()
+
+    def get_total_balance(self, base_currency='USDT'):
+        balances = binance.fetch_balance()
+        total_balance = 0
+        
+        # Fetch all ticker prices in a single API call
+        tickers = binance.fetch_tickers()
+        available_symbols = set(tickers.keys())
+
+        for balance in balances['info']['balances']:
+            asset = balance['asset']
+            free_balance = float(balance['free'])
+            locked_balance = float(balance['locked'])
+            total_asset_balance = free_balance + locked_balance
+
+            if asset == base_currency:
+                total_balance += total_asset_balance
+            else:
+                try:
+                    ticker = f'{asset}/{base_currency}'
+                    if ticker in available_symbols:
+                        asset_price = tickers[ticker]['last']
+                        total_balance += total_asset_balance * asset_price
+                except ccxt.BaseError as e:
+                    print(f"Error fetching ticker for {ticker}: {e}")
+        return total_balance
 
     def get_state(self, data):
         order_book, ohlcv = data
@@ -70,7 +116,7 @@ class MarketMakingStrategy:
         buffer = 1.05  # 1% buffer
 
         if action == 0:  # Buy
-            usdt_balance = self.get_balance('USDT')
+            usdt_balance = self.get_balance('BUSD')
             if usdt_balance >= min_notional:
                 price = asks[0][0] * (1 - transaction_fee)
                 amount = max(max_risk / price, min_trade_amount)
@@ -129,7 +175,6 @@ class MarketMakingStrategy:
         for index in sorted(orders_to_remove, reverse=True):
             del self.placed_orders[index]
 
-
     def update_order_statuses(self):
         updated_orders = []
         for _, order in self.placed_orders:
@@ -140,31 +185,13 @@ class MarketMakingStrategy:
                 print(f"Error fetching order {order['id']} status:", e)
         self.placed_orders = updated_orders
 
-
-    def get_realized_pnl(self):
-        pnl = 0
-        for _, order in self.placed_orders:
-            if order['status'] == 'filled':  # Check if the order is filled (Binance)
-                order_info = binance.fetch_order(order['id'], symbol)
-                filled_amount = order_info['filled']
-                price = order_info['price']
-                side = order_info['side']
-
-                if side == 'buy':
-                    pnl -= price * filled_amount * (1 + transaction_fee)
-                elif side == 'sell':
-                    pnl += price * filled_amount * (1 - transaction_fee)
-
-        return pnl
-
-
     def get_reward(self, action):
-        current_pnl = self.get_realized_pnl()
+        starting_balance = self.starting_balance
         self.execute_action(action)
         time.sleep(5)
-        new_pnl = self.get_realized_pnl()
+        new_balance = self.total_balance
 
-        reward = new_pnl - current_pnl
+        reward = new_balance - starting_balance
 
         return reward
 
@@ -182,9 +209,8 @@ class MarketMakingStrategy:
         for index in sorted(orders_to_remove, reverse=True):
             del self.placed_orders[index]
 
-
-
     def run(self):
+        self.start_balance_updater()
         while True:
             data = (binance.fetch_order_book(symbol), binance.fetch_ohlcv(symbol, timeframe)[-1])
             print("data")
@@ -202,6 +228,8 @@ class MarketMakingStrategy:
             print("next_state")
 
             self.update_q_network(state, action, reward, next_state)
+            self.update_epsilon() 
+            print("epsilon: ", self.epsilon)
             self.cancel_old_orders()
 
             time.sleep(5)
@@ -214,5 +242,5 @@ model = tf.keras.models.Sequential([
 
 model.compile(optimizer='adam', loss='mse')
 
-market_maker = MarketMakingStrategy(30, 3, 0.1, 0.99, 0.1, model)
+market_maker = MarketMakingStrategy(30, 3, 0.1, 0.99, 0.99, model)
 market_maker.run()
